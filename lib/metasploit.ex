@@ -1,0 +1,2 @@
+defmodule Metasploit do
+end
