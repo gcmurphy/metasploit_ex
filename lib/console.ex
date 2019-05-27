@@ -15,25 +15,55 @@ defmodule Metasploit.Console do
   and race conditions that exist within the metasploit framework.
   """
 
+
+  use GenServer
   alias Metasploit.RPC
 
-  defstruct client: nil, id: nil
+  @delay 250
 
-  @doc """
-  Attempt to connect to an existing metasploit console, or create a new
-  console instance if one doesn't exist.
+  defmodule Connection do
+    defstruct client: nil, id: nil
+  end
 
-  """
-  def client!(username, password, opts \\ []) do
+  def start_link({username, password, opts}) do
     client = RPC.client(username, password, opts)
-
     with {:ok, id} <- console_session_id(client) do
-      %__MODULE__{id: id, client: client}
-    else
-      {:error, error} ->
-        raise "rpc error: #{inspect(error["error_backtrace"])}"
+      state = {%Connection{id: id, client: client}, ""}
+      GenServer.start(__MODULE__, state)
     end
   end
+
+  @doc """
+  Write a single command to the metasploit console
+  """
+  def write(pid, command) do
+    GenServer.call(pid, {:write, command})
+  end
+
+  @doc """
+  Attempts to read from the metasploit console buffer. This is not guarenteed
+  to contain output from previously run commands as it is gathered by polling.
+  """
+  def read(pid) do
+    GenServer.call(pid, {:read})
+  end
+
+  @doc """
+  Run a series of metasploit commands in sequence (to enable scripting
+  and automation).
+
+  Example:
+
+  #{__MODULE__}.run(msf, ~s(
+    use auxiliary/scanner/http/ssl
+    set RHOSTS 192.168.1.0/24
+    run
+  ))
+  """
+  def run(pid, script) do
+    GenServer.cast(pid, {:execute, script})
+  end
+
 
   defp create_console(%Tesla.Client{} = client) do
     with {:ok, resp} <- RPC.call(client, "console.create") do
@@ -54,80 +84,44 @@ defmodule Metasploit.Console do
     end
   end
 
-  @doc """
-  Write a single command to the metasploit console
-  """
-  def write(%__MODULE__{} = console, command) do
-    RPC.call(console.client, "console.write", [console.id, command <> "\n"])
-    console
+  @impl true
+  def init(opts) do
+    Process.send_after(self(), :poll_read, @delay)
+    {:ok, opts}
   end
 
-  @doc """
-  Attempts to read from the metasploit console buffer. This is not guarenteed
-  to contain output from previously run commands. As such you should consider
-  running read_with_retry() with Task.await() to return the first time the
-  buffer is not empty.
-  """
-  def read(%__MODULE__{} = console) do
-    with {:ok, resp} <- RPC.call(console.client, "console.read", [console.id]) do
-      case resp.body do
-        %{"data" => data, "prompt" => _prompt} ->
-          {:ok, data}
-
-        error ->
-          {:error, error}
-      end
-    end
-  end
-
-  @doc """
-  Run a series of metasploit commands in sequence (to enable scripting
-  and automation).
-
-  Example:
-
-  #{__MODULE__}.run(msf, ~s(
-    use auxiliary/scanner/http/ssl
-    set RHOSTS 192.168.1.0/24
-    run
-  ))
-  """
-  def run(%__MODULE__{} = console, script) do
-    # write script line by line to console, ignoring blank lines or comments
+  @impl true
+  def handle_cast({:execute, script}, state) do
     String.split(script, "\n")
     |> Enum.map(&String.trim/1)
     |> Enum.reject(&(&1 == "" or String.starts_with?(&1, "#")))
-    |> Enum.each(&write(console, &1))
+    |> Enum.each(&send(self(), {:write, &1}))
+    {:noreply, state}
   end
 
-  defp try_read(console, delay, retries) when retries > 0 do
-    :timer.sleep(delay)
+  @impl true
+  def handle_call({:write, command}, _from, {conn, _} = state) do
+    RPC.call(conn.client, "console.write", [conn.id, command <> "\n"])
+    {:reply, :ok, state}
+  end
 
-    case read(console) do
-      {:ok, ""} ->
-        try_read(console, delay, retries - 1)
+  def handle_call({:read}, _from, {conn, buffer}) do
+    {:reply,  buffer, {conn, ""}}
+  end
 
-      {:ok, data} ->
-        data
-
-      otherwise ->
-        otherwise
+  @impl true
+  def handle_info(:poll_read, {conn, buffer} = state) do
+    Process.send_after(self(), :poll_read, @delay)
+    with {:ok, resp} <- RPC.call(conn.client, "console.read", [conn.id]) do
+      case resp.body do
+        %{"data" => data, "prompt" => _prompt} ->
+          {:noreply, {conn, buffer <> data}}
+        _ ->
+          {:noreply, state}
+      end
+    else
+      {:error, _error} ->
+        {:noreply, state}
     end
-  end
-
-  defp try_read(console, delay, _) do
-    :timer.sleep(delay)
-    read(console)
-  end
-
-  @doc """
-  Repeditly tries to read from the msfconsole buffer every `delay` milliseconds.
-  This is done with a Task.async, and the resulting future can be waited on
-  via Task.await() to obtain the result.
-  """
-  def read_with_retry(console, delay \\ 250, retries \\ 10) do
-    Task.async(fn ->
-      try_read(console, delay, retries)
-    end)
   end
 end

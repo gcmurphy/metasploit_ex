@@ -1,6 +1,6 @@
 # Metasploit
 
-A Elixir API to access the Metasploit framework. Allows a Metsploit session to
+A Elixir access the Metasploit framework. Allows a Metsploit session to
 be controlled via Elixir over the msgprc protocol.
 
 ## Usage
@@ -25,47 +25,33 @@ console:
 alias Metasploit.Console
 
 # create a console session
-console = Console.client!("msf", "correct_horse_battery_staple", endpoint: "https://127.0.0.1:55553")
+{:ok, pid} = Console.start_link({"msf", "correct_horse_battery_staple", endpoint: "https://127.0.0.1:55553"})
 
 # Issue write / read commands individually
-console
-|> Console.write("use auxiliary/scanner/http/ssl")
-|> Console.write("set RHOSTS 192.168.1.0/24")
-|> Console.write("run")
-|> Console.read()
+
+Console.write(pid, "use auxiliary/scanner/http/ssl")
+Console.write(pid, "set RHOSTS 192.168.1.0/24")
+Console.write(pid, "run")
+Console.read(pid)
 
 
 # Or run a batch series of commands
-Console.run(console, ~s(
+Console.run(pid, ~s(
   use auxiliary/scanner/http/ssl
   set RHOSTS 192.168.1.0/24
   run
 ))
 
-# And wait for the output
-output = Task.await!(Console.read_with_retry(console))
-
 ```
 
 It should be noted that:
   - A console session becomes inactive 5 minutes after last command was sent.
-  - Reading output from the console is best done via polling as it is not
-    guaranteed to return output as soon as you issue a command.
+  - Read may not produce any data. The genserver polls the rpc server for new
+    data every 250ms. This is likely to change.
 
 
-## Installation
+## Status
 
-If [available in Hex](https://hex.pm/docs/publish), the package can be installed
-by adding `metasploit_ex` to your list of dependencies in `mix.exs`:
+This module is currently under development and has not been published to hex.pm
+yet.
 
-```elixir
-def deps do
-  [
-    {:metasploit_ex, "~> 0.1.0"}
-  ]
-end
-```
-
-Documentation can be generated with [ExDoc](https://github.com/elixir-lang/ex_doc)
-and published on [HexDocs](https://hexdocs.pm). Once published, the docs can
-be found at [https://hexdocs.pm/metasploit_ex](https://hexdocs.pm/metasploit_ex).
