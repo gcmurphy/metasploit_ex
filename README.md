@@ -46,8 +46,7 @@ Console.run(pid, ~s(
 
 It should be noted that:
   - A console session becomes inactive 5 minutes after last command was sent.
-  - Read may not produce any data. The genserver polls the rpc server for new
-    data every 250ms. This is likely to change.
+  - Read will block until it receives some data or times out.
 
 
 ## Status
