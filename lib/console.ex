@@ -15,7 +15,6 @@ defmodule Metasploit.Console do
   and race conditions that exist within the metasploit framework.
   """
 
-
   use GenServer
   alias Metasploit.RPC
 
@@ -27,25 +26,25 @@ defmodule Metasploit.Console do
 
   def start_link({username, password, opts}) do
     client = RPC.client(username, password, opts)
+
     with {:ok, id} <- console_session_id(client) do
-      state = {%Connection{id: id, client: client}, ""}
-      GenServer.start(__MODULE__, state)
+      GenServer.start(__MODULE__, {%Connection{id: id, client: client}})
     end
   end
 
   @doc """
   Write a single command to the metasploit console
   """
-  def write(pid, command) do
-    GenServer.call(pid, {:write, command})
+  def write(pid, command, timeout \\ 10_000) do
+    GenServer.call(pid, {:write, command}, timeout)
   end
 
   @doc """
   Attempts to read from the metasploit console buffer. This is not guarenteed
   to contain output from previously run commands as it is gathered by polling.
   """
-  def read(pid) do
-    GenServer.call(pid, {:read})
+  def read(pid, timeout \\ 10_000) do
+    GenServer.call(pid, {:read}, timeout)
   end
 
   @doc """
@@ -63,7 +62,6 @@ defmodule Metasploit.Console do
   def run(pid, script) do
     GenServer.cast(pid, {:execute, script})
   end
-
 
   defp create_console(%Tesla.Client{} = client) do
     with {:ok, resp} <- RPC.call(client, "console.create") do
@@ -86,7 +84,6 @@ defmodule Metasploit.Console do
 
   @impl true
   def init(opts) do
-    Process.send_after(self(), :poll_read, @delay)
     {:ok, opts}
   end
 
@@ -96,32 +93,34 @@ defmodule Metasploit.Console do
     |> Enum.map(&String.trim/1)
     |> Enum.reject(&(&1 == "" or String.starts_with?(&1, "#")))
     |> Enum.each(&send(self(), {:write, &1}))
+
     {:noreply, state}
   end
 
   @impl true
-  def handle_call({:write, command}, _from, {conn, _} = state) do
+  def handle_call({:write, command}, _from, {conn} = state) do
     RPC.call(conn.client, "console.write", [conn.id, command <> "\n"])
     {:reply, :ok, state}
   end
 
-  def handle_call({:read}, _from, {conn, buffer}) do
-    {:reply,  buffer, {conn, ""}}
+  @impl true
+  def handle_call({:read}, from, state) do
+    Process.send(self(), {:poll_read, from}, [:noconnect])
+    {:noreply, state}
   end
 
   @impl true
-  def handle_info(:poll_read, {conn, buffer} = state) do
-    Process.send_after(self(), :poll_read, @delay)
+  def handle_info({:poll_read, from}, {conn} = state) do
     with {:ok, resp} <- RPC.call(conn.client, "console.read", [conn.id]) do
       case resp.body do
-        %{"data" => data, "prompt" => _prompt} ->
-          {:noreply, {conn, buffer <> data}}
-        _ ->
-          {:noreply, state}
+        %{"data" => ""} ->
+          Process.send_after(self(), {:poll_read, from}, @delay)
+
+        %{"data" => buffer} ->
+          GenServer.reply(from, buffer)
       end
-    else
-      {:error, _error} ->
-        {:noreply, state}
     end
+
+    {:noreply, state}
   end
 end
