@@ -1,4 +1,6 @@
 # Metasploit
+[![FOSSA Status](https://app.fossa.io/api/projects/git%2Bgithub.com%2Fgcmurphy%2Fmetasploit_ex.svg?type=shield)](https://app.fossa.io/projects/git%2Bgithub.com%2Fgcmurphy%2Fmetasploit_ex?ref=badge_shield)
+
 
 A Elixir access the Metasploit framework. Allows a Metsploit session to
 be controlled via Elixir over the msgprc protocol.
@@ -54,3 +56,7 @@ It should be noted that:
 This module is currently under development and has not been published to hex.pm
 yet.
 
+
+
+## License
+[![FOSSA Status](https://app.fossa.io/api/projects/git%2Bgithub.com%2Fgcmurphy%2Fmetasploit_ex.svg?type=large)](https://app.fossa.io/projects/git%2Bgithub.com%2Fgcmurphy%2Fmetasploit_ex?ref=badge_large)
